@@ -1,42 +1,75 @@
-from fastapi import FastAPI, HTTPException
+import time
+from collections import defaultdict
+
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from ytmusicapi import YTMusic
-import pymysql
 import auth
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 
+load_dotenv()
+
+PLAYLIST_ID = os.getenv("playlist_id", "PLJhSTAItRjxJl8f9mcHenCKVotPkSDFVB")
+
+_allowed = os.getenv("allowed_origins", "")
+ALLOWED_ORIGINS = [o.strip() for o in _allowed.split(",") if o.strip()] or [
+    "http://localhost:5173",
+]
 
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 yt = YTMusic('browser.json')
-load_dotenv()
+
 
 class LoginData(BaseModel):
     username: str
     password: str
 
-def get_connection():
-    return pymysql.connect(
-        host=os.getenv("domain"),
-        user=os.getenv("username"),
-        password=os.getenv("password"),
-        database=os.getenv("database"),
-        port=int(os.getenv("port", 3306))
-    )
+
+def require_auth(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Brak tokenu autoryzacji")
+    token = authorization.split(" ", 1)[1]
+    user = auth.auth(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Klucz JWT niepoprawny")
+    return user
+
+
+_RATE_LIMIT = int(os.getenv("rate_limit", 30))
+_RATE_WINDOW = 60
+# Best-effort in-memory limiter; not shared across workers/restarts.
+_rate_state = defaultdict(list)
+
+
+def rate_limit(request: Request, bucket: str):
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    hits = _rate_state[(bucket, ip)]
+    cutoff = now - _RATE_WINDOW
+    while hits and hits[0] < cutoff:
+        hits.pop(0)
+    if len(hits) >= _RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Zbyt wiele żądań, spróbuj ponownie później")
+    hits.append(now)
+
 
 @app.get("/api/search")
-async def search(query: str):
-    search_results = yt.search(query)
+async def search(query: str, request: Request):
+    rate_limit(request, "search")
+    try:
+        search_results = yt.search(query)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Błąd wyszukiwania w YouTube Music")
     filtered = [
         {
             "videoId": r.get("videoId"),
@@ -48,39 +81,41 @@ async def search(query: str):
     ]
     return {"results": filtered}
 
+
 @app.get("/api/add")
-async def add(videoID: str):
+async def add(videoID: str, request: Request):
+    rate_limit(request, "add")
     try:
         song = yt.get_song(videoID)
-        yt.add_playlist_items("PLJhSTAItRjxJl8f9mcHenCKVotPkSDFVB", [videoID])
-        if not song or not song.get("videoDetails"):
-            raise HTTPException(status_code=404, detail="Nie znaleziono piosenki o podanym ID")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Nieprawidłowe ID: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Nieprawidłowe ID utworu")
+
+    if not song or not song.get("videoDetails"):
+        raise HTTPException(status_code=404, detail="Nie znaleziono piosenki o podanym ID")
+
+    try:
+        yt.add_playlist_items(PLAYLIST_ID, [videoID])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Nie udało się dodać utworu do playlisty")
+
+    return {"success": True, "videoID": videoID}
 
 
 @app.post("/api/login")
 async def login(data: LoginData):
-    login_status = auth.login(data.username, data.password)
-    if login_status == False:
+    token = auth.login(data.username, data.password)
+    if token is False:
         raise HTTPException(status_code=401, detail="Błędny login lub hasło")
-    return {"token": login_status}
+    return {"token": token}
 
 
 @app.get("/api/list")
-async def list(token: str):
-    is_auth = auth.auth(token)
-    if not is_auth:
-        raise HTTPException(status_code=401, detail="Klucz JWT niepoprawny")
-
-    PLAYLIST_ID = "PLJhSTAItRjxJl8f9mcHenCKVotPkSDFVB"
+async def list_tracks(user: str = Depends(require_auth)):
     try:
         playlist = yt.get_playlist(PLAYLIST_ID, limit=None)
         playlist_tracks = playlist.get("tracks", [])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Błąd pobierania playlisty: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Błąd pobierania playlisty")
 
     result = []
     for track in playlist_tracks:
@@ -100,22 +135,14 @@ async def list(token: str):
     return result
 
 
-@app.get("/api/delete")
-async def decline(token: str, videoID: str):
-    is_auth = auth.auth(token)
-    if not is_auth:
-        raise HTTPException(status_code=401, detail="Klucz JWT niepoprawny")
-
-    PLAYLIST_ID = "PLJhSTAItRjxJl8f9mcHenCKVotPkSDFVB"
-
-    # Pobierz playlistę żeby znaleźć setVideoId potrzebny do usunięcia
+@app.delete("/api/delete")
+async def decline(videoID: str, user: str = Depends(require_auth)):
     try:
         playlist = yt.get_playlist(PLAYLIST_ID, limit=None)
         playlist_tracks = playlist.get("tracks", [])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Błąd pobierania playlisty: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Błąd pobierania playlisty")
 
-    # Znajdź utwór po videoId — get_playlist wymaga setVideoId do usunięcia
     track = next(
         (t for t in playlist_tracks if t.get("videoId") == videoID),
         None
@@ -130,17 +157,14 @@ async def decline(token: str, videoID: str):
 
     try:
         yt.remove_playlist_items(PLAYLIST_ID, [{"videoId": videoID, "setVideoId": set_video_id}])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Błąd usuwania z playlisty: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Błąd usuwania z playlisty")
 
     return {"success": True, "videoID": videoID}
-@app.delete("/api/clear-playlist")
-async def clear_playlist(token:str):
-    is_auth = auth.auth(token)
-    if not is_auth:
-        raise HTTPException(status_code=401, detail="Klucz JWT niepoprawny")
 
-    PLAYLIST_ID = "PLJhSTAItRjxJl8f9mcHenCKVotPkSDFVB"
+
+@app.delete("/api/clear-playlist")
+async def clear_playlist(user: str = Depends(require_auth)):
     try:
         playlist = yt.get_playlist(PLAYLIST_ID, limit=None)
         tracks = playlist.get("tracks", [])
@@ -154,6 +178,5 @@ async def clear_playlist(token:str):
             "message": "Playlista została wyczyszczona.",
             "removed": len(tracks)
         }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Błąd czyszczenia playlisty")
