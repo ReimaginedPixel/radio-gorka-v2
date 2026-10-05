@@ -3,3 +3,7 @@ node_modules/
 browser.json
 __pycache__/
 dist/
+*.swp
+*.swo
+*.kate-swp
+.*.kate-swp

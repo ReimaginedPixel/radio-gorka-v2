@@ -170,6 +170,16 @@ username=twoj_user
 password=twoje_haslo
 database=radio_gorka
 port=3306
+
+# Wymagane: długi losowy sekret do podpisywania JWT (aplikacja nie wystartuje bez niego)
+jwt_secret=zmien_na_dlugi_losowy_ciag
+# Opcjonalne:
+jwt_ttl_hours=12
+# Lista dozwolonych originów CORS (oddzielone przecinkami)
+allowed_origins=http://localhost:5173,https://radiogorka.pl
+# ID playlisty YouTube oraz limit żądań na minutę na IP
+playlist_id=PLJhSTAItRjxJl8f9mcHenCKVotPkSDFVB
+rate_limit=30
 ```
 
 Uruchomienie:
@@ -200,13 +210,15 @@ VITE_API_URL=https://frog02-20689.wykr.es/api
 
 ## API
 
+Endpointy administracyjne wymagają nagłówka `Authorization: Bearer {jwt}`.
+
 | Metoda | Endpoint | Opis |
 |--------|----------|------|
 | GET | `/api/search?query={fraza}` | Wyszukaj utwory |
 | GET | `/api/add?videoID={id}` | Dodaj do playlisty |
-| GET | `/api/list?token={jwt}` | Pobierz playlistę |
-| GET | `/api/delete?token={jwt}&videoID={id}` | Usuń utwór |
-| DELETE | `/api/clear-playlist?token={jwt}` | Wyczyść playlistę |
+| GET | `/api/list` | Pobierz playlistę (wymaga tokenu) |
+| DELETE | `/api/delete?videoID={id}` | Usuń utwór (wymaga tokenu) |
+| DELETE | `/api/clear-playlist` | Wyczyść playlistę (wymaga tokenu) |
 | POST | `/api/login` | Zaloguj |
 
 Dokumentacja interaktywna: **https://frog02-20689.wykr.es/docs**

@@ -90,10 +90,8 @@
 
 <script setup>
 import { ref } from "vue";
-import axios from "axios";
+import api from "../api";
 import GitHubButton from "./GitHubButton.vue";
-
-const eventMode = import.meta.env.VITE_EVENT_MODE === 'true'
 
 const query = ref("");
 const results = ref([]);
@@ -122,8 +120,8 @@ const search = async () => {
   results.value = [];
   
   try {
-    const response = await axios.get("https://frog02-20689.wykr.es/api/search?query=" + query.value);
-    results.value = response.data.results.filter(item => item.videoId != null); // <-- dodaj to
+    const response = await api.get("/search", { params: { query: query.value } });
+    results.value = response.data.results.filter(item => item.videoId != null);
   } catch (error) {
     console.error(error);
     showNotification('Błąd podczas wyszukiwania', 'error');
@@ -134,7 +132,7 @@ const search = async () => {
 
 const add = async (item) => {
   try {
-    await axios.get("https://frog02-20689.wykr.es/api/add?videoID=" + item.videoId);
+    await api.get("/add", { params: { videoID: item.videoId } });
     showNotification(`Dodano: ${item.title}`, 'success');
     results.value = results.value.filter(r => r.videoId !== item.videoId);
   } catch (error) {

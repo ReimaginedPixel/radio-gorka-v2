@@ -25,7 +25,7 @@
           <div class="animate-spin w-10 h-10 border-4 border-[#39FF14] border-t-transparent rounded-full"></div>
         </div>
 
-        <div v-else-if="results.length === 0 && eventResults.length === 0" class="text-center py-12">
+        <div v-else-if="results.length === 0" class="text-center py-12">
           <p style="color: #39FF14; font-size: 1.5em;">Brak nowych propozycji</p>
         </div>
 
@@ -174,85 +174,6 @@
             </ul>
           </div>
 
-          <!-- Propozycje eventowe -->
-          <div v-if="eventResults.length > 0 && eventMode">
-            <div class="flex items-center gap-3 mb-4">
-              <h3 class="text-xl font-bold" style="color: #FF1493; font-family: 'Orbitron', sans-serif;">
-                Propozycje eventowe
-              </h3>
-              <label class="flex items-center gap-2 cursor-pointer text-sm" style="color: #FF1493;">
-                <input
-                  type="checkbox"
-                  :checked="allEventSelected"
-                  @change="toggleSelectAll('event')"
-                  class="accent-[#FF1493] w-4 h-4"
-                />
-                Zaznacz wszystkie
-              </label>
-            </div>
-            <ul class="flex flex-col gap-4">
-              <li
-                v-for="(item, index) in eventResults"
-                :key="item.videoID"
-                class="neon-box rounded-lg p-4 flex flex-col sm:flex-row items-center gap-4 hover:scale-[1.02] transition-transform"
-                :style="selectedItems.has('event:' + item.videoID) ? 'border: 2px solid #FF1493; background: rgba(255,20,147,0.06);' : 'border: 2px solid #FF1493;'"
-              >
-                <!-- Checkbox -->
-                <input
-                  type="checkbox"
-                  :checked="selectedItems.has('event:' + item.videoID)"
-                  @change="toggleSelect(item, 'event')"
-                  class="accent-[#FF1493] w-5 h-5 shrink-0 cursor-pointer"
-                />
-
-                <!-- Miniaturka -->
-                <a :href="`https://www.youtube.com/watch?v=${item.videoID}`" target="_blank" class="shrink-0">
-                  <img
-                    :src="`https://img.youtube.com/vi/${item.videoID}/default.jpg`"
-                    :alt="item.title"
-                    class="w-24 h-24 sm:w-16 sm:h-16 rounded-lg object-cover"
-                    style="box-shadow: 0px 0px 10px 2px #FF1493;"
-                  />
-                </a>
-
-                <div class="flex-1 min-w-0 text-center sm:text-left">
-                  <a 
-                    :href="`https://www.youtube.com/watch?v=${item.videoID}`" 
-                    target="_blank" 
-                    class="font-semibold truncate hover:underline block" 
-                    style="color: #FF1493; font-family: 'Orbitron', sans-serif;"
-                  >
-                    {{ item.title }}
-                  </a>
-                  <p style="color: #39FF14;">{{ item.artist }}</p>
-                  <p class="text-xs" style="color: #FF1493;">{{ item.videoID }}</p>
-                </div>
-
-                <div class="flex gap-2 w-full sm:w-auto">
-                  <a 
-                    :href="`https://www.youtube.com/watch?v=${item.videoID}`"
-                    target="_blank"
-                    class="retro-button-green rounded-lg px-3 py-2 shadow-lg flex items-center justify-center gap-1 flex-1 sm:flex-none text-sm"
-                  >
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/>
-                    </svg>
-                    Wyświetl na Youtube
-                  </a>
-                  <button
-                    @click="deleteItem(item, 'event')"
-                    class="retro-button rounded-lg px-3 py-2 shadow-lg flex items-center justify-center gap-1 flex-1 sm:flex-none text-sm"
-                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                    </svg>
-                    Usuń
-                  </button>
-                </div>
-              </li>
-            </ul>
-          </div>
-
         </div>
       </div>
     </div>
@@ -317,13 +238,12 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import axios from 'axios';
+import api from '../api';
 
 const logged = ref(!!localStorage.getItem('token'));
 const username = ref('');
 const password = ref('');
 const results = ref([]);
-const eventResults = ref([]);
 const loading = ref(false);
 const loginLoading = ref(false);
 const loginError = ref('');
@@ -353,7 +273,7 @@ const toggleSelect = (item, type) => {
 
 const toggleSelectAll = (type) => {
   const updated = new Set(selectedItems.value);
-  const list = type === 'normal' ? results.value : eventResults.value;
+  const list = results.value;
   const allSelected = list.every(item => updated.has(`${type}:${item.videoID}`));
   if (allSelected) {
     list.forEach(item => updated.delete(`${type}:${item.videoID}`));
@@ -366,21 +286,28 @@ const toggleSelectAll = (type) => {
 const deleteSelected = async () => {
   deleteSelectedLoading.value = true;
   try {
-    const promises = [];
-    for (const key of selectedItems.value) {
-      const [type, videoID] = key.split(':');
-      const endpoint = 'https://frog02-20689.wykr.es/api/delete';
-      promises.push(
-        axios.get(`${endpoint}?token=${localStorage.token}&videoID=${videoID}`)
-          .then(() => ({ type, videoID }))
-      );
+    const keys = [...selectedItems.value];
+    const outcomes = await Promise.allSettled(
+      keys.map(key => {
+        const videoID = key.split(':')[1];
+        return api.delete('/delete', { params: { videoID } }).then(() => ({ key, videoID }));
+      })
+    );
+
+    const deletedVideoIds = new Set();
+    const remainingKeys = new Set(selectedItems.value);
+    for (let i = 0; i < outcomes.length; i++) {
+      const outcome = outcomes[i];
+      if (outcome.status === 'fulfilled') {
+        deletedVideoIds.add(outcome.value.videoID);
+        remainingKeys.delete(keys[i]);
+      } else {
+        console.error(outcome.reason);
+      }
     }
-    const deleted = await Promise.all(promises);
-    const deletedNormal = new Set(deleted.filter(d => d.type === 'normal').map(d => d.videoID));
-    const deletedEvent = new Set(deleted.filter(d => d.type === 'event').map(d => d.videoID));
-    results.value = results.value.filter(r => !deletedNormal.has(r.videoID));
-    eventResults.value = eventResults.value.filter(r => !deletedEvent.has(r.videoID));
-    selectedItems.value = new Set();
+
+    results.value = results.value.filter(r => !deletedVideoIds.has(r.videoID));
+    selectedItems.value = remainingKeys;
   } catch (error) {
     console.error(error);
   } finally {
@@ -396,12 +323,8 @@ const clearAll = async () => {
   showConfirmModal.value = false;
   clearAllLoading.value = true;
   try {
-    await axios.delete(
-      `https://frog02-20689.wykr.es/api/clear-playlist?token=${localStorage.token}`,
-      { headers: { accept: 'application/json' } }
-    );
+    await api.delete('/clear-playlist');
     results.value = [];
-    eventResults.value = [];
     selectedItems.value = new Set();
   } catch (error) {
     console.error(error);
@@ -419,9 +342,7 @@ onMounted(async () => {
 const fetchResults = async () => {
   loading.value = true;
   try {
-    const [normalRes] = await Promise.all([
-      axios.get("https://frog02-20689.wykr.es/api/list?token=" + localStorage.token),
-    ]);
+    const normalRes = await api.get("/list");
     results.value = normalRes.data;
   } catch (error) {
     console.error(error);
@@ -435,7 +356,7 @@ const handleLogin = async () => {
   loginLoading.value = true;
   loginError.value = '';
   try {
-    const response = await axios.post("https://frog02-20689.wykr.es/api/login", {
+    const response = await api.post("/login", {
       username: username.value,
       password: password.value
     });
@@ -454,23 +375,16 @@ const handleLogout = () => {
   localStorage.removeItem('token');
   logged.value = false;
   results.value = [];
-  eventResults.value = [];
   selectedItems.value = new Set();
 };
 
 const deleteItem = async (item, type) => {
-  const endpoint = 'https://frog02-20689.wykr.es/api/delete';
   try {
-    await axios.get(endpoint + "?token=" + localStorage.token + "&videoID=" + item.videoID);
-    // Odznacz jeśli był zaznaczony
+    await api.delete('/delete', { params: { videoID: item.videoID } });
     const updated = new Set(selectedItems.value);
     updated.delete(`${type}:${item.videoID}`);
     selectedItems.value = updated;
-    if (type === 'event') {
-      eventResults.value = eventResults.value.filter(r => r !== item);
-    } else {
-      results.value = results.value.filter(r => r !== item);
-    }
+    results.value = results.value.filter(r => r !== item);
   } catch (error) {
     console.error(error);
   }
