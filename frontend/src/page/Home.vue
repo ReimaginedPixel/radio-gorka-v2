@@ -1,159 +1,550 @@
 <template>
-  <div class="min-h-screen flex flex-col items-center py-12 px-4 relative overflow-hidden" style="background-color: #0d0d2b;">
-    <header class="relative z-10 text-center mb-12">
-      <div class="inline-flex items-center justify-center w-32 h-32 mb-4" style="box-shadow: 1px 1px 75px 15px #39FF14; border-radius: 50%; overflow: hidden;">
-        <img v-if="!imageError" src="/logo.png" alt="Radio Górka" class="w-full h-full object-cover" @error="handleImageError" />
-        <span v-else class="text-6xl">📻</span>
-      </div>
-      <h1 class="text-4xl md:text-5xl font-bold neon-text mb-2" style="font-family: 'Orbitron', sans-serif;">Radio Górka</h1>
-      <p class="text-xl" style="color: #FF1493;">Podaj utwór do wyszukania na YT Music</p>
-    </header>
-
-    <div class="relative z-10 w-full max-w-2xl">
-      <div class="neon-box rounded-lg p-6">
-        <div class="flex flex-col sm:flex-row gap-3">
-          <input
-            type="text"
-            v-model="query"
-            placeholder="Szukaj utworu..."
-            class="retro-input rounded-lg px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-pink-500"
-            style="width: 100%;"
-            @keyup.enter="search()"
-          />
-          <button
-            @click="search()"
-            :disabled="loading"
-            class="retro-button rounded-lg px-6 py-3 shadow-lg flex items-center justify-center gap-2 min-w-[140px]"
-          >
-            <svg v-if="loading" class="animate-spin h-5 w-5" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
-            <span>{{ loading ? 'Szukam...' : 'Wyszukaj' }}</span>
-          </button>
+  <div class="home">
+    <div class="col-left">
+      <NowPlaying :now-playing="live.nowPlaying" :received-at="live.receivedAt" />
+      <div class="readouts">
+        <div class="readout panel">
+          <span class="eyebrow">W KOLEJCE</span>
+          <span class="readout-num led tabular">{{ pad2(live.queue.length) }}</span>
+        </div>
+        <div class="readout panel">
+          <span class="eyebrow">CZEKA NA DJ-A</span>
+          <span class="readout-num led tabular">{{ pad2(live.pendingCount) }}</span>
         </div>
       </div>
     </div>
 
-    <div v-if="results.length > 0" class="relative z-10 w-full max-w-2xl mt-8 space-y-4">
-      <transition-group name="list" tag="ul" class="flex flex-col gap-4">
-        <li
-          v-for="(item, index) in results"
-          :key="item.videoId"
-          class="neon-box rounded-lg p-4 flex flex-col sm:flex-row items-center gap-4 hover:scale-[1.02] transition-transform cursor-pointer"
-        >
-          <a :href="'https://www.youtube.com/watch?v=' + item.videoId" target="_blank" class="shrink-0">
-            <img
-              :src="'https://img.youtube.com/vi/' + item.videoId + '/default.jpg'"
-              :alt="item.title"
-              class="w-24 h-24 sm:w-16 sm:h-16 rounded-lg object-cover"
-              style="box-shadow: 0px 0px 10px 2px #39FF14;"
-            />
-          </a>
-          <div class="flex-1 min-w-0 text-center sm:text-left">
-            <a :href="'https://www.youtube.com/watch?v=' + item.videoId" target="_blank" class="font-semibold truncate hover:underline block" style="color: #39FF14; font-family: 'Orbitron', sans-serif;">{{ item.title }}</a>
-            <p class="text-sm" style="color: #FF1493;">{{ item.artist }}</p>
+    <div class="col-right">
+      <form class="search panel" role="search" @submit.prevent="doSearch">
+        <Icon name="search" class="search-icon" />
+        <label for="q" class="sr-only">Szukaj utworu</label>
+        <input
+          id="q"
+          ref="searchInput"
+          v-model="query"
+          class="search-input"
+          type="text"
+          inputmode="search"
+          enterkeyhint="search"
+          autocomplete="off"
+          maxlength="150"
+          placeholder="Szukaj utworu na YT Music…"
+        />
+        <button class="btn btn-primary search-btn" type="submit" :disabled="searching || !query.trim()">
+          <svg v-if="searching" class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6">
+            <path d="M12 3a9 9 0 1 0 9 9" stroke-linecap="round" />
+          </svg>
+          <span>{{ searching ? 'Szukam' : 'Szukaj' }}</span>
+        </button>
+      </form>
+
+      <Transition name="block">
+        <section v-if="pageItems.length" class="results" aria-label="Wyniki wyszukiwania" @keydown="onFanKey">
+          <div class="results-inner">
+          <div class="section-head">
+            <span class="eyebrow">STUKNIJ OKLADKE</span>
+            <span class="results-count">{{ results.length }} {{ plural(results.length, 'wynik', 'wyniki', 'wyników') }}</span>
+            <button v-if="pages > 1" type="button" class="btn btn-quiet btn-sm" :disabled="!!adding" @click="nextPage">
+              <Icon name="shuffle" :size="15" />
+              Inne
+            </button>
           </div>
-          <button
-            @click="add(item)"
-            class="retro-button-green rounded-lg px-4 py-2 shadow-lg flex items-center gap-2 whitespace-nowrap w-full sm:w-auto justify-center"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-            </svg>
-            Dodaj
-          </button>
-        </li>
-      </transition-group>
-    </div>
+          <CoverFan
+            ref="fan"
+            :items="pageItems"
+            :busy-id="adding"
+            :shake-id="shakeId"
+            :flying-id="flyingId"
+            :leaving="leaving"
+            @pick="pick"
+            @focus="focused = $event"
+          />
+          <div class="caption panel" :class="{ 'is-hidden': leaving }">
+            <Transition name="meta" mode="out-in">
+              <div v-if="focused" :key="focused.videoId" class="caption-text">
+                <span class="t-title">{{ focused.title }}</span>
+                <span class="t-sub">{{ [focused.artist, clock(focused.durationSeconds)].filter((x) => x && x !== '--:--').join(' · ') }}</span>
+              </div>
+            </Transition>
+            <button type="button" class="btn btn-primary btn-sm" :disabled="!focused || !!adding" @click="pick(focused)">
+              <Icon name="plus" :size="15" :stroke="2.2" />
+              Dodaj
+            </button>
+          </div>
+          </div>
+        </section>
+      </Transition>
 
-    <div v-else-if="searched && !loading" class="relative z-10 mt-8 text-center" style="color: #FF1493;">
-      <p>Brak wyników. Spróbuj wpisać inną frazę.</p>
-    </div>
-
-    <div v-if="notification" class="fixed bottom-6 right-6 z-50">
-      <div :class="[
-        'neon-box rounded-lg px-6 py-4 flex items-center gap-3',
-        notification.type === 'success' ? 'border-[#39FF14]' : 'border-[#FF1493]'
-      ]">
-        <span :class="notification.type === 'success' ? 'text-[#39FF14]' : 'text-[#FF1493]'">
-          {{ notification.type === 'success' ? '✓' : '✕' }}
-        </span>
-        <p style="color: #FF1493;">{{ notification.message }}</p>
+      <div v-if="noResults" class="empty">
+        <strong>Nic nie znaleźliśmy dla „{{ lastQuery }}”</strong>
+        <span>Wpisz wykonawcę i tytuł, na przykład „Alan Walker Faded”.</span>
       </div>
-    </div>
 
-    <p class="mt-6" style="color: #FF1493;">© Radio Górka</p>
-    <GitHubButton href="https://github.com/daniel-kub/radio-gorka-v2" />
+      <section class="queue" aria-label="Kolejka">
+        <div class="section-head">
+          <span class="eyebrow">KOLEJKA</span>
+          <CountBadge :value="live.queue.length" />
+        </div>
+
+        <p v-if="offline" class="notice">Brak połączenia z serwerem, próbuję ponownie…</p>
+
+        <TransitionGroup name="row" tag="div" class="rows">
+          <div
+            v-for="row in rows"
+            :key="row.key"
+            class="track-row"
+            :class="{ 'is-mine': row.mine, 'is-landing': row.item.landing, 'is-rejected': row.item.status === 'rejected' }"
+          >
+            <span class="q-num led tabular" aria-hidden="true">{{ row.position ? pad2(row.position) : '--' }}</span>
+            <span class="thumb" :data-thumb="row.position ? null : `req-${row.item.id}`">
+              <img :src="row.thumbnail" alt="" @error="hideImg" />
+            </span>
+            <span class="t-body">
+              <span class="t-title">{{ row.item.title }}</span>
+              <span class="t-sub">{{ row.item.artist }}</span>
+            </span>
+            <span v-if="row.chip" class="chip" :class="row.chipClass">{{ row.chip }}</span>
+            <span v-if="row.position" class="t-dur hide-xs">{{ clock(row.item.durationSeconds) }}</span>
+            <button
+              v-if="row.dismissable"
+              type="button"
+              class="icon-btn"
+              :aria-label="row.item.status === 'pending' ? 'Wycofaj zgłoszenie' : 'Ukryj'"
+              :title="row.item.status === 'pending' ? 'Wycofaj zgłoszenie' : 'Ukryj'"
+              @click="dropMine(row.item)"
+            >
+              <Icon name="x" :size="14" :stroke="2" />
+            </button>
+          </div>
+        </TransitionGroup>
+
+        <div v-if="!mineOpen.length && !live.queue.length" class="empty">
+          <strong>Kolejka jest pusta</strong>
+          <span>Wyszukaj utwór i stuknij okładkę, żeby go zgłosić.</span>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from "vue";
-import axios from "axios";
-import GitHubButton from "./GitHubButton.vue";
+import { computed, nextTick, reactive, ref } from 'vue'
+import CountBadge from '../components/CountBadge.vue'
+import CoverFan from '../components/CoverFan.vue'
+import Icon from '../components/Icon.vue'
+import NowPlaying from '../components/NowPlaying.vue'
+import { useMyRequests } from '../composables/useMyRequests'
+import { usePolling } from '../composables/usePolling'
+import { toast } from '../composables/useToast'
+import { api, errorMessage } from '../lib/api'
+import { clock, pad2, plural } from '../lib/format'
+import { flyImage, rectOf } from '../lib/motion'
 
-const eventMode = import.meta.env.VITE_EVENT_MODE === 'true'
+const PAGE = 5
 
-const query = ref("");
-const results = ref([]);
-const loading = ref(false);
-const searched = ref(false);
-const notification = ref(null);
-const imageError = ref(false);
+const query = ref('')
+const lastQuery = ref('')
+const searching = ref(false)
+const searched = ref(false)
+const results = ref([])
+const page = ref(0)
+const focused = ref(null)
 
-const handleImageError = (e) => {
-  imageError.value = true;
-  e.target.style.display = 'none';
-};
+const adding = ref(null)
+const shakeId = ref(null)
+const flyingId = ref(null)
+const leaving = ref(false)
 
-const showNotification = (message, type = 'success') => {
-  notification.value = { message, type };
-  setTimeout(() => {
-    notification.value = null;
-  }, 3000);
-};
+const fan = ref(null)
+const searchInput = ref(null)
 
-const search = async () => {
-  if (!query.value.trim()) return;
-  
-  loading.value = true;
-  searched.value = true;
-  results.value = [];
-  
+const live = reactive({ nowPlaying: null, queue: [], pendingCount: 0, receivedAt: 0 })
+const offline = ref(false)
+
+const mine = useMyRequests()
+const myIds = mine.ids
+
+const pages = computed(() => Math.ceil(results.value.length / PAGE))
+const pageItems = computed(() => results.value.slice(page.value * PAGE, page.value * PAGE + PAGE))
+const noResults = computed(() => searched.value && !searching.value && !results.value.length && lastQuery.value)
+
+const queueIds = computed(() => new Set(live.queue.map((q) => q.id)))
+const playingId = computed(() => live.nowPlaying?.submissionId ?? null)
+
+// Własne zgłoszenia zostają na górze, dopóki nie pojawią się w publicznej kolejce albo nie zagrają.
+const mineOpen = computed(() =>
+  mine.requests.value.filter(
+    (r) => !queueIds.value.has(r.id) && r.id !== playingId.value && !r.nowPlaying && ['pending', 'accepted', 'rejected'].includes(r.status),
+  ),
+)
+
+const localThumbs = computed(() => new Map(mine.requests.value.map((r) => [r.id, r.thumbnail])))
+const thumbFor = (q) => localThumbs.value.get(q.id) || q.thumbnail
+
+function mineLabel(r) {
+  if (r.status === 'pending') return 'Czeka na DJ-a'
+  if (r.status === 'accepted') return 'W kolejce'
+  return 'Odrzucone'
+}
+
+// Jedna lista z jednym szablonem wiersza: zaakceptowane zgłoszenie płynnie zjeżdża na swoje miejsce w kolejce.
+const rows = computed(() => [
+  ...mineOpen.value.map((r) => ({
+    key: `r${r.id}`,
+    item: r,
+    mine: true,
+    position: 0,
+    thumbnail: r.thumbnail,
+    chip: mineLabel(r),
+    chipClass: `is-${r.status}`,
+    dismissable: r.status !== 'accepted',
+  })),
+  ...live.queue.map((q, i) => ({
+    key: `r${q.id}`,
+    item: q,
+    mine: myIds.value.has(q.id),
+    position: i + 1,
+    thumbnail: thumbFor(q),
+    chip: myIds.value.has(q.id) ? 'Twoje' : '',
+    chipClass: 'is-accepted',
+    dismissable: false,
+  })),
+])
+
+async function refreshLive() {
   try {
-    const response = await axios.get("https://frog02-20689.wykr.es/api/search?query=" + query.value);
-    results.value = response.data.results.filter(item => item.videoId != null); // <-- dodaj to
-  } catch (error) {
-    console.error(error);
-    showNotification('Błąd podczas wyszukiwania', 'error');
+    const [data] = await Promise.all([api.live(), mine.refresh().catch(() => {})])
+    Object.assign(live, data, { receivedAt: Date.now() })
+    offline.value = false
+  } catch {
+    offline.value = true
+  }
+}
+
+usePolling(refreshLive, 5000)
+
+async function doSearch() {
+  const q = query.value.trim()
+  if (!q || searching.value || adding.value) return
+  searching.value = true
+  searchInput.value?.blur()
+  try {
+    const data = await api.search(q)
+    results.value = data.results || []
+    page.value = 0
+    lastQuery.value = q
+    searched.value = true
+  } catch (err) {
+    toast(errorMessage(err, 'Błąd podczas wyszukiwania'), 'error')
   } finally {
-    loading.value = false;
+    searching.value = false
   }
-};
+}
 
-const add = async (item) => {
+function nextPage() {
+  page.value = (page.value + 1) % pages.value
+}
+
+function onFanKey(e) {
+  if (e.key === 'ArrowRight') fan.value?.focusNext(1)
+  else if (e.key === 'ArrowLeft') fan.value?.focusNext(-1)
+  else return
+  e.preventDefault()
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function pick(item) {
+  if (!item || adding.value || leaving.value) return
+  adding.value = item.videoId
   try {
-    await axios.get("https://frog02-20689.wykr.es/api/add?videoID=" + item.videoId);
-    showNotification(`Dodano: ${item.title}`, 'success');
-    results.value = results.value.filter(r => r.videoId !== item.videoId);
-  } catch (error) {
-    showNotification(error.response?.data?.detail || 'Błąd podczas dodawania', 'error');
+    const res = await api.submit(item.videoId)
+    const request = {
+      id: res.id,
+      ticket: res.ticket,
+      videoId: res.videoId,
+      title: res.title || item.title,
+      artist: item.artist || res.artist,
+      thumbnail: item.thumbnail || res.thumbnail,
+      durationSeconds: res.durationSeconds ?? item.durationSeconds,
+      status: res.status,
+      createdAt: res.createdAt,
+    }
+    mine.add(request)
+    await nextTick()
+
+    // Okładka leci do swojego miejsca w kolejce. Jeśli to miejsce jest pod ekranem, najpierw przewijamy.
+    const thumbEl = document.querySelector(`[data-thumb="req-${request.id}"]`)
+    let to = rectOf(thumbEl)
+    if (to && to.top + to.height > window.innerHeight - 12) {
+      window.scrollBy({ top: to.top + to.height - window.innerHeight + 40, behavior: 'smooth' })
+      await wait(380)
+      to = rectOf(thumbEl)
+    }
+    const from = fan.value?.rectFor(item.videoId)
+    adding.value = null
+    flyingId.value = item.videoId
+    leaving.value = true
+    await flyImage({ src: item.thumbnail, from, to })
+    mine.land(request.id)
+    toast(`Zgłoszono: ${request.title}`)
+    results.value = []
+    searched.value = false
+  } catch (err) {
+    shakeId.value = item.videoId
+    setTimeout(() => (shakeId.value = null), 500)
+    toast(errorMessage(err, 'Nie udało się zgłosić utworu'), 'error')
+  } finally {
+    adding.value = null
+    flyingId.value = null
+    leaving.value = false
   }
-};
+}
+
+async function dropMine(r) {
+  if (r.status !== 'pending') {
+    mine.forget(r.id)
+    return
+  }
+  try {
+    await mine.cancel(r)
+    toast('Zgłoszenie wycofane')
+  } catch (err) {
+    toast(errorMessage(err, 'Nie udało się wycofać zgłoszenia'), 'error')
+    mine.refresh().catch(() => {})
+  }
+}
+
+function hideImg(e) {
+  e.target.style.visibility = 'hidden'
+}
 </script>
 
 <style scoped>
-.list-enter-active,
-.list-leave-active {
-  transition: all 0.4s ease;
+.home {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-start;
 }
-.list-enter-from,
-.list-leave-to {
+
+.col-left {
+  flex: 1 1 320px;
+  min-width: 290px;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.col-right {
+  flex: 2 1 380px;
+  min-width: 290px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+@media (min-width: 760px) {
+  .col-left {
+    position: sticky;
+    top: 20px;
+  }
+}
+
+.readouts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.readout {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 18px;
+}
+
+.readout .eyebrow {
+  font-size: 11px;
+}
+
+.readout-num {
+  font-size: 26px;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.search {
+  padding: 9px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  transition: border-color 0.2s;
+}
+
+.search:focus-within {
+  border-color: color-mix(in srgb, var(--acc) 60%, transparent);
+}
+
+.search-icon {
+  color: var(--dim);
+  margin-left: 7px;
+  flex: none;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  padding: 9px 0;
+}
+
+.search-input::placeholder {
+  color: var(--dim);
+}
+
+.search-btn {
+  min-width: 98px;
+}
+
+/* blok wyników rozwija się i zwija wysokością, więc kolejka pod nim nie skacze */
+.results {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.results-inner {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.results .section-head .eyebrow {
+  flex: 1;
+}
+
+.results-count {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.caption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 16px;
+  transition: opacity 0.3s ease, transform 0.3s var(--ease-out);
+}
+
+.caption.is-hidden {
   opacity: 0;
-  transform: translateX(-30px);
+  transform: translateY(8px);
 }
-.list-move {
-  transition: transform 0.4s ease;
+
+.caption-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.rows {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.rows > .row-leave-active {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.q-num {
+  width: 22px;
+  flex: none;
+  text-align: center;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.track-row.is-mine {
+  border-color: color-mix(in srgb, var(--acc) 38%, var(--line));
+}
+
+.track-row.is-rejected {
+  opacity: 0.6;
+}
+
+.track-row.is-landing .thumb img {
+  opacity: 0;
+}
+
+/* wiersz, do którego leci okładka, stoi od razu na miejscu, żeby trafić w niego dokładnie */
+.track-row.is-landing.row-enter-from {
+  opacity: 1;
+  transform: none;
+}
+
+.track-row:not(.is-landing) .thumb img {
+  transition: opacity 0.15s;
+}
+
+.notice {
+  margin: 0;
+  padding: 0 5px;
+  font-size: 13px;
+  color: var(--warn);
+}
+
+.block-enter-active,
+.block-leave-active {
+  transition: grid-template-rows 0.42s var(--ease-out), opacity 0.3s ease, margin 0.42s var(--ease-out);
+}
+
+.block-enter-active .results-inner,
+.block-leave-active .results-inner {
+  overflow: hidden;
+}
+
+.block-enter-from,
+.block-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-bottom: -14px;
+}
+
+.meta-enter-active,
+.meta-leave-active {
+  transition: opacity 0.16s ease, transform 0.2s var(--ease-out);
+}
+
+.meta-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.meta-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@media (max-width: 420px) {
+  .hide-xs {
+    display: none;
+  }
 }
 </style>
