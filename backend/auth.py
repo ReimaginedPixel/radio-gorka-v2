@@ -1,9 +1,10 @@
-import pymysql
 import jwt
 import bcrypt
 import os
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
+
+from db import get_connection
 
 load_dotenv()
 
@@ -15,16 +16,7 @@ if not JWT_SECRET:
 
 JWT_ALGORITHM = "HS256"
 TOKEN_TTL_HOURS = int(os.getenv("jwt_ttl_hours", 12))
-
-
-def get_connection():
-    return pymysql.connect(
-        host=os.getenv("domain"),
-        user=os.getenv("username"),
-        password=os.getenv("password"),
-        database=os.getenv("database"),
-        port=int(os.getenv("port", 3306))
-    )
+VOTER_TOKEN_TTL_DAYS = int(os.getenv("voter_token_ttl_days", 180))
 
 
 def login(username, password):
@@ -40,6 +32,7 @@ def login(username, password):
             return jwt.encode(
                 {
                     "sub": username,
+                    "typ": "admin",
                     "exp": datetime.now(timezone.utc) + timedelta(hours=TOKEN_TTL_HOURS),
                 },
                 JWT_SECRET,
@@ -56,6 +49,10 @@ def auth(token):
     except Exception:
         return None
 
+    # Tokeny głosujących są podpisane tym samym sekretem, więc nigdy nie mogą przejść jako admin.
+    if data.get("typ") == "voter":
+        return None
+
     username = data.get("sub")
     if not username:
         return None
@@ -69,3 +66,25 @@ def auth(token):
         return username
     finally:
         conn.close()
+
+
+def create_voter_token(voter_id):
+    return jwt.encode(
+        {
+            "sub": voter_id,
+            "typ": "voter",
+            "exp": datetime.now(timezone.utc) + timedelta(days=VOTER_TOKEN_TTL_DAYS),
+        },
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
+
+
+def decode_voter_token(token):
+    try:
+        data = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        return None
+    if data.get("typ") != "voter":
+        return None
+    return data.get("sub")
